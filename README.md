@@ -149,18 +149,3 @@ python -m pytest tests/ -v
 ### 8) Git Checkpoints
 - With `--git-checkpoint`, commits after each successful edit iteration.
 - Easy rollback to any iteration.
-
-## Production Hardening
-
-| Feature | Status |
-|---------|--------|
-| Retry + exponential backoff (429/network) | Done |
-| Structured Python logging | Done |
-| Error handling (API, file I/O, subprocess) | Done |
-| Verification timeout (120s) | Done |
-| Dry-run mode | Done |
-| Session history (JSON) | Done |
-| Git checkpoints | Done |
-| Unit test suite | Done |
-| Path-escape protection | Done |
-| Command allowlist (verifier) | Done |
