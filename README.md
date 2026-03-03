@@ -1,5 +1,4 @@
-# Agentic Code Fixer (Gemini Flash)
-
+# Agentic Code Fixer
 This repo now contains an end-to-end starter pipeline for a multi-agent AI system that:
 
 1. Reads your codebase.
