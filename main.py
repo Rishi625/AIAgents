@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from agentic_fix import AgentConfig, AgenticFixLoop
 from agentic_fix.api_check import check_api_limit_status
+from agentic_fix.logger import get_logger
 
 
 def resolve_cli_path(raw_path: str) -> Path:
@@ -17,7 +18,6 @@ def resolve_cli_path(raw_path: str) -> Path:
     if "\\" in raw_path:
         candidates.append(raw_path.replace("\\", "/"))
     if raw_path.startswith(".") and not raw_path.startswith("./") and len(raw_path) > 1:
-        # Handles Git Bash quirk: '.\\dir' can become '.dir'
         candidates.append("./" + raw_path[1:])
 
     for candidate in candidates:
@@ -72,6 +72,16 @@ def parse_args() -> ArgumentParser:
         action="store_true",
         help="Run a lightweight API quota/access check and exit.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview proposed edits without applying them.",
+    )
+    parser.add_argument(
+        "--git-checkpoint",
+        action="store_true",
+        help="Create a git commit after each successful edit iteration.",
+    )
     return parser
 
 
@@ -79,6 +89,9 @@ def main() -> None:
     load_dotenv()
     parser = parse_args()
     args = parser.parse_args()
+
+    logger = get_logger(verbose=args.verbose)
+
     if not args.check_api and not args.task.strip():
         parser.error("task is required unless --check-api is used.")
 
@@ -88,11 +101,12 @@ def main() -> None:
     if args.no_reviewer:
         config = replace(config, enable_reviewer=False)
 
-    print("=== Agentic Fix CLI ===")
-    print(f"Model: {config.model}")
+    logger.info("=== Agentic Fix CLI ===")
+    logger.info("Model: %s", config.model)
+
     if args.check_api:
         ok, message = check_api_limit_status(api_key=config.api_key, model=config.model)
-        print(message)
+        logger.info(message)
         if not ok:
             raise SystemExit(1)
         return
@@ -101,14 +115,18 @@ def main() -> None:
     if not repo_root.exists() or not repo_root.is_dir():
         raise ValueError(f"Invalid repo path: {repo_root}")
 
-    print(f"Task: {args.task}")
-    print(f"Repo: {repo_root}")
-    print(f"Max iterations: {config.max_iterations}")
-    print(f"Reviewer enabled: {config.enable_reviewer}")
+    logger.info("Task: %s", args.task)
+    logger.info("Repo: %s", repo_root)
+    logger.info("Max iterations: %d", config.max_iterations)
+    logger.info("Reviewer: %s", "enabled" if config.enable_reviewer else "disabled")
+    if args.dry_run:
+        logger.info("Mode: DRY RUN (no edits will be applied)")
+    if args.git_checkpoint:
+        logger.info("Git checkpoints: enabled")
     if args.verify:
-        print(f"Verify command: {args.verify}")
+        logger.info("Verify command: %s", args.verify)
     if args.error_file:
-        print(f"Error context file: {args.error_file}")
+        logger.info("Error context file: %s", args.error_file)
 
     loop = AgenticFixLoop(repo_root=repo_root, config=config, verbose=args.verbose)
     initial_error_context = ""
@@ -118,13 +136,15 @@ def main() -> None:
             raise ValueError(f"Invalid error context file: {error_path}")
         initial_error_context = error_path.read_text(encoding="utf-8")
 
-    loop.run(
+    outcome = loop.run(
         task=args.task,
         verify_command=args.verify,
         initial_error_context=initial_error_context,
+        dry_run=args.dry_run,
+        git_checkpoint_enabled=args.git_checkpoint,
     )
+    logger.info("Outcome: %s", outcome)
 
 
 if __name__ == "__main__":
     main()
-

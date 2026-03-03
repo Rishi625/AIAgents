@@ -1,12 +1,18 @@
-# Agentic Code Fixer
-This repo now contains an end-to-end starter pipeline for a multi-agent AI system that:
+# Agentic Code Fixer (Gemini Flash)
 
-1. Reads your codebase.
-2. Uses a **Planner agent** (Gemini Flash) to propose targeted edits.
-3. Uses a **Reviewer agent** (Gemini Flash) to critique/revise the plan.
-4. Applies edits in an agentic loop.
-5. Runs verification commands (tests/lint) via a verifier role.
-6. Iterates until verified or max iterations reached.
+A production-ready multi-agent AI system that reads your codebase, diagnoses bugs, and fixes them autonomously using an iterative agentic loop powered by Gemini Flash.
+
+## Features
+
+- **Multi-agent roles**: Planner, Reviewer, Executor, Verifier
+- **Retry with exponential backoff**: handles 429/rate limits gracefully
+- **Proper Python logging**: structured, timestamped, verbose mode
+- **Dry-run mode**: preview proposed edits before applying
+- **Session history**: every run saved as JSON for audit/replay
+- **Git checkpoints**: optional commit after each iteration
+- **Error context input**: seed agent with stack traces/logs
+- **API health check**: validate key/model/quota from CLI
+- **Test suite**: unit tests for all core modules
 
 ## Project Structure
 
@@ -15,15 +21,25 @@ AIAgents/
 ├── agentic_fix/
 │   ├── __init__.py
 │   ├── agent.py          # Main agentic control loop
+│   ├── api_check.py      # API quota/access health check
 │   ├── config.py         # Env + runtime settings
 │   ├── context.py        # Repo scanning + context building
-│   ├── gemini_client.py  # Gemini API wrappers for planner/reviewer
+│   ├── gemini_client.py  # Gemini API with retry + error handling
+│   ├── git_utils.py      # Git checkpoint utilities
+│   ├── logger.py         # Structured Python logging setup
 │   ├── prompts.py        # Role-specific prompts
 │   ├── schema.py         # Data models for plans/edits/results
+│   ├── session.py        # Run session history (JSON logs)
 │   ├── verify.py         # Safe verification command runner
-│   └── workspace.py      # Apply create/replace edits
-├── sample_buggy_repo/    # Demo target repo with intentional bug
-├── sample_complex_repo/  # Larger multi-file buggy demo repo
+│   └── workspace.py      # Apply/preview edits
+├── tests/                # Unit tests for agent modules
+│   ├── test_context.py
+│   ├── test_schema.py
+│   ├── test_session.py
+│   ├── test_verify.py
+│   └── test_workspace.py
+├── sample_buggy_repo/    # Simple demo target
+├── sample_complex_repo/  # Multi-file buggy demo target
 ├── main.py               # CLI entrypoint
 ├── requirements.txt
 └── .gitignore
@@ -49,110 +65,102 @@ MAX_CHARS_PER_FILE=4000
 ENABLE_REVIEWER=true
 ```
 
-## Run
-
-```bash
-python main.py "Fix import errors in the package" --repo . --verify "python -m pytest -q"
-```
-
-If `--verify` is not provided, the agent can use a verification command suggested by the model.
-
-## Run Against Another Repo
-
-Yes, you can point this agent to any other repository folder using `--repo`.
-
-```bash
-python main.py "Fix failing tests" --repo "C:\path\to\another\repo" --verify "python -m pytest -q"
-```
-
-## Live CLI Updates
-
-Use `--verbose` to stream more detailed progress in the terminal:
-
-```bash
-python main.py "Fix failing tests" --repo . --verify "python -m pytest -q" --verbose
-```
-
-Useful CLI flags:
-- `--max-iterations 8` to override iteration limit for one run.
-- `--no-reviewer` to disable reviewer role for one run.
-- `--error-file path/to/errors.txt` to seed first-iteration error context.
-- `--check-api` to run API quota/access health check only.
-
 ## Check API Quota/Access
-
-If web UI says quota is available but CLI fails, run:
 
 ```bash
 python main.py --check-api
 ```
 
-This performs a tiny live call using your configured `GEMINI_API_KEY` and `GEMINI_MODEL`, then prints:
-- success + token usage (if available), or
-- detailed quota/auth error (including 429/resource exhausted).
+Performs a tiny live call to validate your key, model, and quota.
 
-## Demo With Separate Buggy Folder
-
-This repo includes `sample_buggy_repo` with an intentional bug in `calc.py`.
-Try:
+## Run
 
 ```bash
-python main.py "Fix bug in add function" --repo .\sample_buggy_repo --verify "python -m pytest -q" --verbose
+python main.py "Fix failing tests" --repo ./sample_complex_repo --verify "python -m pytest -q" --verbose
 ```
 
-For a larger, more realistic target with multiple failing tests:
+## Run Against Any External Repo
 
 ```bash
-python main.py "Fix checkout pricing, shipping threshold, and tax bugs" --repo .\sample_complex_repo --verify "python -m pytest -q" --verbose --error-file .\sample_complex_repo\error_logs\pytest_failure.txt
+python main.py "Fix billing module bugs" --repo "C:/path/to/repo" --verify "python -m pytest -q"
+```
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--repo PATH` | Target repo folder (default: `.`) |
+| `--verify CMD` | Verification command (e.g. `pytest -q`) |
+| `--verbose` | Detailed step-by-step logging |
+| `--max-iterations N` | Override max loop iterations |
+| `--no-reviewer` | Disable reviewer agent for this run |
+| `--error-file PATH` | Seed first iteration with error logs |
+| `--check-api` | Validate API key/model/quota and exit |
+| `--dry-run` | Preview edits without applying |
+| `--git-checkpoint` | Git commit after each iteration |
+
+## Demo With Complex Buggy Repo
+
+```bash
+python main.py "Fix checkout pricing, shipping threshold, and tax bugs" \
+  --repo ./sample_complex_repo \
+  --verify "python -m pytest -q" \
+  --verbose \
+  --error-file ./sample_complex_repo/error_logs/pytest_failure.txt
+```
+
+## Run Tests
+
+```bash
+python -m pytest tests/ -v
 ```
 
 ## Agentic Multi-Agent Architecture
 
 ### 1) Context Builder
-- Scans repository files (with extension filtering + ignored folders).
-- Produces a bounded snapshot of file contents for the model.
+- Scans repo files (extension filtering + ignored dirs).
+- Produces a bounded snapshot of file contents.
 
 ### 2) Planner Agent (Gemini Flash)
-- Receives:
-  - task
-  - current repository snapshot
-  - previous iteration verification feedback
-- Returns strict JSON:
-  - `summary`
-  - `edits[]` (create/replace operations)
-  - `verify_command`
-  - `done`
+- Receives task + repo snapshot + previous failure context.
+- Returns strict JSON with edits, verify command, done flag.
 
 ### 3) Reviewer Agent (Gemini Flash)
 - Reviews planner output for safety/minimality/quality.
-- Can:
-  - approve existing plan, or
-  - return feedback, or
-  - provide a revised plan.
+- Can approve, return feedback, or provide revised plan.
 
-### 4) Executor Role
-- Applies each edit to the workspace:
-  - `create`: write a new file
-  - `replace`: find `old_text` and replace with `new_text`
+### 4) Executor
+- Applies edits (`create` / `replace`).
+- Path-escape protection + permission error handling.
 
-### 5) Verifier Role
-- Executes safe allowlisted commands (`python`, `pytest`, `ruff`, etc.).
+### 5) Verifier
+- Runs safe allowlisted commands with timeout.
 - Captures stdout/stderr.
 
 ### 6) Reflect + Iterate
-- If verification fails, output is fed into the next planning iteration.
-- Optional startup logs/errors passed by `--error-file` are used as initial context in iteration 1.
-- Loop stops when:
-  - verification passes, or
-  - planner says done with no edits, or
-  - max iterations reached.
+- Failed verification output fed back to next planner iteration.
+- Optional `--error-file` seeds first iteration context.
+- Loop stops on: success, planner done, or max iterations.
 
-## How You Can Extend This
+### 7) Session Logging
+- Every run writes a JSON session log to `.agentic_fix_logs/`.
+- Contains all iterations, plans, reviews, edits, and verify results.
 
-- Add richer tools (AST edits, symbol search, test selection).
-- Add memory/state file per run for better long-horizon tasks.
-- Add Git integration for branch-per-fix and commit checkpoints.
-- Add guardrails:
-  - block edits to sensitive files
-  - require human approval before apply
-  - dry-run mode for previewing patch plans
+### 8) Git Checkpoints
+- With `--git-checkpoint`, commits after each successful edit iteration.
+- Easy rollback to any iteration.
+
+## Production Hardening
+
+| Feature | Status |
+|---------|--------|
+| Retry + exponential backoff (429/network) | Done |
+| Structured Python logging | Done |
+| Error handling (API, file I/O, subprocess) | Done |
+| Verification timeout (120s) | Done |
+| Dry-run mode | Done |
+| Session history (JSON) | Done |
+| Git checkpoints | Done |
+| Unit test suite | Done |
+| Path-escape protection | Done |
+| Command allowlist (verifier) | Done |

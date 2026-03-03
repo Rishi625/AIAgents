@@ -8,3 +8,4 @@ venv/
 *.pyc
 *.pyo
 *.pyd
+.agentic_fix_logs/
