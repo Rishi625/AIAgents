@@ -1,0 +1,8 @@
+FAILED tests/test_pricing.py::test_parse_coupon_rate_percentage_to_decimal - assert 10.0 == 0.1
+FAILED tests/test_checkout.py::test_shipping_is_free_at_threshold - assert 7.5 == 0.0
+FAILED tests/test_checkout.py::test_calculate_order_total_with_coupon - assert -4272.5 == 109.42
+
+Traceback (most recent call last):
+  File "tests/test_checkout.py", line 17, in test_calculate_order_total_with_coupon
+    assert calculate_order_total(items, state="NY", coupon_code="SAVE10", loyalty_points=10) == 109.42
+AssertionError: assert -4272.5 == 109.42
